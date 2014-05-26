@@ -75,9 +75,9 @@ void services_set_mod(struct tm *t) {
 
 /** Given a string with a time, eg "12:34", append the difference
  * between that time and the current service_mod. If services_mod
- * is 750 (12:30), then the resulting string will be "12:34/+00:04".
+ * is 750 (12:30), then the resulting string will be "12:34 +4".
  * If services_mod is 760 (12:40), then the resulting string will
- * be "12:34/-00:06".
+ * be "12:34 -6".
  * @param time String
  */
 void services_append_diff(char *time) {
@@ -85,6 +85,7 @@ void services_append_diff(char *time) {
   uint8_t h, m;
   bool do_m, valid;
   uint16_t mod, diff, factor;
+  /* parse out hours and minutes, eg h=12,m=34 */
   p = time;
   h = 0U;
   m = 0U;
@@ -105,6 +106,7 @@ void services_append_diff(char *time) {
     ++p;
   }
   if (valid) {
+    /* mod = Minute Of Day (0..1439) */
     mod = h * 60UL + m;
     /* check if mod is most likely the previous day */
     if (mod > services_mod) {

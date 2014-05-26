@@ -114,11 +114,11 @@ function make_stop_message(stopinfo) {
   };
 }
 
-function send_bus_stops_near(pos) {
+function send_bus_stops_near(pos, attempt) {
   app_msgs = [];
   var req = new XMLHttpRequest();
   req.open('GET', 'http://api.perthtransit.com/1/bus_stops?near=' + pos.lat + ',' + pos.lng, true);
-  req.timeout = 15000;
+  req.timeout = 5000;
   req.onload = function(e) {
     if (req.readyState == 4) {
       if (((req.status == 200) || (req.status == 304)) && (req.responseText.length > 0)) {
@@ -132,7 +132,14 @@ function send_bus_stops_near(pos) {
         }
       } else {
         // request error
-        app_msgs.push(make_text_message("No comms"));
+        if (attempt > 0)
+        {
+          send_bus_stops_near(pos, attempt - 1);
+        }
+        else
+        {
+          app_msgs.push(make_text_message("No comms"));
+        }
       }
       send_app_msgs();
     }
@@ -145,11 +152,11 @@ function position_ok(position) {
   send_bus_stops_near({
     lat: position.coords.latitude,
     lng: position.coords.longitude
-  });
+  }, 3);
   //send_bus_stops_near({
   //  lat: -32.051655,
   //  lng: 115.746192
-  //});
+  //}, 3);
 }
 
 function position_fail(error) {
@@ -162,7 +169,7 @@ Pebble.addEventListener("ready",
     setTimeout(function() {
       Pebble.sendAppMessage(make_text_message("Locating"));
       navigator.geolocation.getCurrentPosition(position_ok, position_fail,
-        {enableHighAccuracy: true, timeout: 60 * 1000, maximumAge: 10 * 60 * 1000});
+        {enableHighAccuracy: true, timeout: 60 * 1000, maximumAge: 1 * 60 * 1000});
     }, 10);
   }
 );
@@ -197,24 +204,36 @@ function bus_services_fail() {
   app_msgs.push(make_text_message("No comms"));
 }
 
+function send_services_at_stop(stop_number, attempt)
+{
+  app_msgs = [];
+  var req = new XMLHttpRequest();
+  req.open('GET', 'http://api.perthtransit.com/1/bus_stops/' + stop_number, true);
+  req.timeout = 5000;
+  req.onload = function(e) {
+    if (req.readyState == 4) {
+      if (((req.status == 200) || (req.status == 304)) && (req.responseText.length > 0)) {
+        bus_services_ok(JSON.parse(req.responseText).response);
+      } else {
+        if (attempt > 0)
+        {
+          send_services_at_stop(stop_number, attempt - 1);
+        }
+        else
+        {
+          bus_services_fail();
+        }
+      }
+      send_app_msgs();
+    }
+  };
+  req.send(null);
+}
+
 Pebble.addEventListener("appmessage",
   function(e) {
     console.log("stop_number:" + e.payload.stop_number);
     Pebble.sendAppMessage(make_text_message("Finding services"));
-    app_msgs = [];
-    var req = new XMLHttpRequest();
-    req.open('GET', 'http://api.perthtransit.com/1/bus_stops/' + e.payload.stop_number, true);
-    req.timeout = 15000;
-    req.onload = function(e) {
-      if (req.readyState == 4) {
-        if (((req.status == 200) || (req.status == 304)) && (req.responseText.length > 0)) {
-          bus_services_ok(JSON.parse(req.responseText).response);
-        } else {
-          bus_services_fail();
-        }
-        send_app_msgs();
-      }
-    };
-    req.send(null);
+    send_services_at_stop(e.payload.stop_number, 3);
   }
 );
