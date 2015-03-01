@@ -1,35 +1,35 @@
 {
-    "shortName": "Bus Times",
-    "versionCode": 3,
-    "longName": "Perth Bus Times",
     "appKeys": {
-        "service_info": 4,
-        "stop_location": 2,
-        "service_dest": 5,
-        "stop_name": 3,
-        "stop_number": 1
-    },
-    "resources": {
-        "media": [
-            {
-                "type": "png",
-                "name": "IMAGE_MENU_ICON",
-                "file": "images/BusIcon28x28.png",
-                "menuIcon": true
-            },
-            {
-                "type": "png",
-                "name": "IMAGE_WINDOW_ICON",
-                "file": "images/BusIcon16x16.png"
-            }
-        ]
+        "identifier": 1,
+        "subtitle": 3,
+        "title": 2
     },
     "capabilities": [
         "location"
     ],
-    "versionLabel": "1.0.2",
-    "uuid": "327928b6-a4aa-47de-8141-6a84a56b47a3",
     "companyName": "andrew.gregory@gmail.com",
+    "longName": "Perth Bus Times",
+    "projectType": "native",
+    "resources": {
+        "media": [
+            {
+                "file": "images/BusIcon28x28.png",
+                "menuIcon": true,
+                "name": "IMAGE_MENU_ICON",
+                "type": "png"
+            },
+            {
+                "file": "images/BusIcon16x16.png",
+                "name": "IMAGE_WINDOW_ICON",
+                "type": "png"
+            }
+        ]
+    },
+    "sdkVersion": "2",
+    "shortName": "Bus Times",
+    "uuid": "327928b6-a4aa-47de-8141-6a84a56b47a3",
+    "versionCode": 3,
+    "versionLabel": "1.1",
     "watchapp": {
         "watchface": false
     }

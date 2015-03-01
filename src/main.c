@@ -1,411 +1,368 @@
 #include <pebble.h>
+#include <ctype.h>
 
-#define KEY_STOP_NUMBER 1
-#define KEY_STOP_LOCATION 2
-#define KEY_STOP_NAME 3
-#define KEY_SERVICE_INFO 4
-#define KEY_SERVICE_DEST 5
+#define KEY_IDENTIFIER (1U)
+#define KEY_TITLE      (2U)
+#define KEY_SUBTITLE   (3U)
+
+#define MAX_MENUS    ( 2U)
+#define MAX_STOPS    (12U) /* 2 headings + 10 stops */
+#define MAX_SERVICES ( 6U) /* 1 heading + 5 services */
+
+#define HALF_DAY ( 720U) /* half a day in minutes */
+#define FULL_DAY (1440U) /* full day in minutes */
 
 GBitmap *window_icon;
 
-// Request service information. If stop_number is zero, this will request the nearest stops.
-// If stop_number is not zero, this will request the next few services for the stop.
-void request_services(uint32_t stop_number) {
-  DictionaryIterator *iter;
-  app_message_outbox_begin(&iter);
-  if (iter != NULL) {
-    dict_write_uint32(iter, KEY_STOP_NUMBER, stop_number);
-    app_message_outbox_send();
-  }
-}
+#define MAX_IDENTIFIER_LEN (16U)
+#define MAX_TITLE_LEN      (32U)
+#define MAX_SUBTITLE_LEN   (32U)
 
-uint32_t get_stop_number(Tuple *t) {
-  uint32_t n;
+typedef struct {
+  char identifier[MAX_IDENTIFIER_LEN];
+  char title[MAX_TITLE_LEN];
+  char subtitle[MAX_SUBTITLE_LEN];
+} menu_item_t;
+
+typedef struct {
+  uint8_t max_items;
+  menu_item_t * items;
+  uint8_t num_items;
+  MenuLayer * layer;
+  Window * window;
+} menu_t;
+
+menu_item_t stops[MAX_STOPS], services[MAX_SERVICES];
+menu_t menus[MAX_MENUS];
+uint8_t menu_idx;
+
+void menus_init(void) {
   uint8_t i;
-  n = 0;
-  if (t != NULL) {
-         if ((t->type == TUPLE_INT ) && (t->length == 2)) n = t->value[0].int16 ;
-    else if ((t->type == TUPLE_INT ) && (t->length == 4)) n = t->value[0].int32 ;
-    else if ((t->type == TUPLE_INT ) && (t->length == 1)) n = t->value[0].int8  ;
-    else if ((t->type == TUPLE_UINT) && (t->length == 2)) n = t->value[0].uint16;
-    else if ((t->type == TUPLE_UINT) && (t->length == 4)) n = t->value[0].uint32;
-    else if ((t->type == TUPLE_UINT) && (t->length == 1)) n = t->value[0].uint8 ;
-    else if (t->type == TUPLE_CSTRING) {
-      for (i = 1; i < t->length; ++i) {
-        n *= 10;
-        n += (t->value[0].cstring[i - 1] - '0');
-      }
-    } else n = 0;
+  for (i = 0U; i < MAX_MENUS; ++i) {
+    menus[i].window = NULL;
   }
-  return n;
+  menus[0].max_items = MAX_STOPS;
+  menus[0].items = stops;
+  menus[1].max_items = MAX_SERVICES;
+  menus[1].items = services;
 }
 
-void get_cstring(char *str, uint8_t str_size, Tuple *t, char *default_str) {
-  if ((t == NULL) || (t->type != TUPLE_CSTRING)) {
-    strcpy(str, "");
-  } else {
-    strncpy(str, t->value[0].cstring, str_size);
+/** Pebble time as minute-of-day. */
+uint16_t pebble_mod;
+
+void pebble_minute_tick(struct tm * tick_time, TimeUnits units_changed) {
+  menu_t * menu = (menu_t *)app_message_get_context();
+  pebble_mod = tick_time->tm_hour * 60U + tick_time->tm_min;
+  if ((menu != NULL) && (menu->layer != NULL)) {
+    menu_layer_reload_data(menu->layer);  
+  }
+}
+
+/** Given a string, search it for the first sequence of "HH:MM" and parse
+ * that as a time. Then output the time difference after it formatted as
+ * " +HH:MM".
+ * @param string String with embedded time to be updated with a time delta.
+ */
+void update_time_delta(char * string) {
+  uint8_t i, h, m;
+  uint16_t mod, pmod, diff;
+  for (i = 0U; string[i] != '\0'; ++i) {
+    if (isdigit((int)string[i + 0U]) && isdigit((int)string[i + 1U]) &&
+        (string[i + 2U] == ':') &&
+        isdigit((int)string[i + 3U]) && isdigit((int)string[i + 4U])) {
+      
+      /* Get the in-string time as minute-of-day */
+      h = (string[i + 0U] - '0') * 10U + (string[i + 1U] - '0');
+      m = (string[i + 3U] - '0') * 10U + (string[i + 4U] - '0');
+      mod = h * 60U + m;
+      
+      /* check if mod is most likely the previous day */
+      pmod = pebble_mod;
+      if (mod > pmod) {
+        if (mod > (pmod + HALF_DAY)) {
+          pmod += FULL_DAY;
+        }
+      }
+      /* check if mod is most likely the next day */
+      if (pmod > mod) {
+        if (pmod > (mod + HALF_DAY)) {
+          mod += FULL_DAY;
+        }
+      }
+      
+      /* calculate difference */
+      if (mod >= pmod) {
+        string[i + 6U] = '+';
+        diff = mod - pmod;
+      } else {
+        string[i + 6U] = '-';
+        diff = pmod - mod;
+      }
+      
+      /* format for display */
+      string[i + 5U] = ' ';
+      string[i + 8U] = ':';      
+      h = diff / 60U;
+      m = diff % 60U;
+      if (h > 9U) {
+        string[i +  7U] = '*';
+        string[i +  9U] = '*';
+        string[i + 10U] = '*';
+      } else {
+        string[i +  7U] = (h % 10U) + '0';
+        string[i +  9U] = (m / 10U) + '0';
+        string[i + 10U] = (m % 10U) + '0';
+      }
+      break;
+    }
   }
 }
 
 /* * * * * * * * * *
- * Services Window *
+ * Window Handling *
  * * * * * * * * * */
 
-#define MAX_SERVICES 5
-#define SERVICE_INFO_LEN 20
-#define SERVICE_DEST_LEN 30
+struct MenuLayerCallbacks menu_callbacks;
 
-struct {
-  char info[SERVICE_INFO_LEN];
-  char dest[SERVICE_DEST_LEN];
-} services[MAX_SERVICES];
-uint8_t num_services;
-
-Window *services_window;
-MenuLayer *services_menu;
-uint16_t services_mod; // minute of day for display purposes
-
-#define HALF_DAY 720U /* half a day in minutes */
-#define FULL_DAY 1440U /* full day in minutes */
-
-void services_set_mod(struct tm *t) {
-  services_mod = t->tm_hour * 60UL + t->tm_min;
+void window_load(Window * window) {
+  menu_t * menu = (menu_t *)window_get_user_data(window);
+  GRect bounds = layer_get_bounds(window_get_root_layer(window));
+  menu->layer = menu_layer_create(bounds);
+  menu_layer_set_callbacks(menu->layer, menu, menu_callbacks);
+  menu_layer_set_click_config_onto_window(menu->layer, menu->window);
+  layer_add_child(window_get_root_layer(menu->window), menu_layer_get_layer(menu->layer));
 }
 
-/** Given a string with a time, eg "12:34", append the difference
- * between that time and the current service_mod. If services_mod
- * is 750 (12:30), then the resulting string will be "12:34 +4".
- * If services_mod is 760 (12:40), then the resulting string will
- * be "12:34 -6".
- * @param time String
- */
-void services_append_diff(char *time) {
-  char *p;
-  uint8_t h, m;
-  bool do_m, valid;
-  uint16_t mod, diff, factor;
-  /* parse out hours and minutes, eg h=12,m=34 */
-  p = time;
-  h = 0U;
-  m = 0U;
-  do_m = false;
-  valid = true;
-  while (*p != 0) {
-    if (*p == ':') {
-      do_m = true;
-    } else if ((*p < '0') || (*p > '9')) {
-      valid = false;
-    } else {
-      if (do_m) {
-        m = m * 10U + (*p - '0');
-      } else {
-        h = h * 10U + (*p - '0');
-      }
-    }
-    ++p;
-  }
-  if (valid) {
-    /* mod = Minute Of Day (0..1439) */
-    mod = h * 60UL + m;
-    /* check if mod is most likely the previous day */
-    if (mod > services_mod) {
-      if (mod > (services_mod + HALF_DAY)) {
-        services_mod += FULL_DAY;
-      }
-    }
-    /* check if mod is most likely the next day */
-    if (services_mod > mod) {
-      if (services_mod > (mod + HALF_DAY)) {
-        mod += FULL_DAY;
-      }
-    }
-    /* format for display */
-    *p++ = ' ';
-    /* calculate difference */
-    if (mod >= services_mod) {
-      *p++ = '+';
-      diff = mod - services_mod;
-    } else {
-      *p++ = '-';
-      diff = services_mod - mod;
-    }
-    /* output difference, supressing leading zeroes */
-    valid = false;
-    factor = 100U;
-    if (diff > 999U) {
-      diff = 999U;
-    }
-    while (factor > 0U) {
-      m = diff / factor % 10U;
-      if ((m != 0) || (factor == 1U)) {
-        valid = true;
-      }
-      if (valid) {
-        *p++ = m + '0';
-      }
-      factor /= 10U;
-    }
-    *p = 0;
-  }
+void window_appear(Window * window) {
 }
 
-uint16_t services_get_num_rows(struct MenuLayer *menu_layer, uint16_t section_index, void *callback_context) {
-  return (num_services == 0) ? 1 : num_services;
+void window_disappear(Window * window) {
 }
 
-void services_draw_row(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_index, void *callback_context) {
-  char buf [30];
-  char *title;
-  char *subtitle;
-  title = services[cell_index->row].info;
-  subtitle = services[cell_index->row].dest;
-  if (subtitle[0] == '\0') {
-    subtitle = NULL;
-  }
-  strcpy(buf, title);
-  buf[5] = 0;
-  services_append_diff(buf);
-  strcat(buf, &title[5]);
-  title = buf;
-  menu_cell_basic_draw(ctx, cell_layer, title, subtitle, NULL);
-}
-
-void services_minute_tick(struct tm *tick_time, TimeUnits units_changed) {
-  services_set_mod(tick_time);
-  menu_layer_reload_data(services_menu);
-}
-
-struct MenuLayerCallbacks services_menu_callbacks;
-
-void services_window_load(Window *window) {
-  time_t t;
-  // Initialise globals
-  num_services = 0;
-  strncpy(services[0].info, "Finding services", SERVICE_INFO_LEN);
-  services[0].dest[0] = '\0';
-  time(&t);
-  services_set_mod(localtime(&t));
-  
-  // Create the menu
-  services_menu = menu_layer_create(GRect(0, 0, 144, 154));
-  services_menu_callbacks.draw_header = NULL;
-  services_menu_callbacks.draw_row = services_draw_row;
-  services_menu_callbacks.get_cell_height = NULL;
-  services_menu_callbacks.get_header_height = NULL;
-  services_menu_callbacks.get_num_rows = services_get_num_rows;
-  services_menu_callbacks.get_num_sections = NULL;
-  services_menu_callbacks.select_click = NULL;
-  services_menu_callbacks.select_long_click = NULL;
-  services_menu_callbacks.selection_changed = NULL;
-  menu_layer_set_callbacks(services_menu, NULL, services_menu_callbacks);
-  menu_layer_set_click_config_onto_window(services_menu, services_window);
-	
-	// Add the menu to the window
-	layer_add_child(window_get_root_layer(services_window), menu_layer_get_layer(services_menu));
-  
-  // Tick to update display every minute
-  tick_timer_service_subscribe(MINUTE_UNIT, services_minute_tick);
-  
-  // Get the menu data
-  request_services(*(uint32_t *)window_get_user_data(services_window));
-}
-
-void services_window_appear(Window *window) {
-}
-
-void services_window_disappear(Window *window) {
-}
-
-void services_window_unload(Window *window) {
-  tick_timer_service_unsubscribe();
-  menu_layer_destroy(services_menu);
-  num_services = 0;
-}
-
-void services_add(DictionaryIterator *received) {
-  if (num_services < MAX_SERVICES) {
-    get_cstring(services[num_services].info, SERVICE_INFO_LEN, dict_find(received, KEY_SERVICE_INFO), "Error");
-    get_cstring(services[num_services].dest, SERVICE_DEST_LEN, dict_find(received, KEY_SERVICE_DEST), "Error");
-    ++num_services;
-    menu_layer_reload_data(services_menu);
-  }
+void window_unload(Window * window) {
+  menu_t * menu = (menu_t *)window_get_user_data(window);
+  menu_layer_destroy(menu->layer);
+  menu->layer = NULL;
+  menu->num_items = 0U;
+  --menu_idx;
 }
 
 /* * * * * * * * *
- * Stops Window  *
+ * Menu Handling *
  * * * * * * * * */
 
-#define MAX_STOPS 15
-#define STOP_LOCATION_LEN 20
-#define STOP_NAME_LEN 30
+typedef struct {
+  menu_t * menu;
+  uint8_t idx;
+  MenuIndex menu_idx;
+  menu_item_t * item;
+} menu_iterator_t;
 
-struct {
-  uint32_t stop_number;
-  char location[STOP_LOCATION_LEN]; // eg "2.5km WNW"
-  char name[STOP_NAME_LEN];
-} stops[MAX_STOPS];
-// special value UINT8_MAX used for time Searching
-uint8_t num_stops;
-
-Window *stops_window;
-MenuLayer *stops_menu;
-
-uint16_t stops_get_num_rows(struct MenuLayer *menu_layer, uint16_t section_index, void *callback_context) {
-  return (num_stops == 0) ? 1 : num_stops;
+void menu_iterator_init(menu_iterator_t * pi, menu_t * menu) {
+  pi->menu = menu;
+  pi->idx = UINT8_MAX;
+  pi->menu_idx.section = 0U;
+  pi->menu_idx.row = UINT16_MAX;
+  pi->item = &menu->items[0];
 }
 
-void stops_draw_row(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_index, void *callback_context) {
-  char buf[16];
-  char *title;
-  char *subtitle;
-  uint16_t idx;
-  idx = cell_index->row;
-  if (num_stops == 0) {
-    title = stops[0].location;
-  } else {
-    snprintf(buf, sizeof(buf), "%lu %s", stops[idx].stop_number, stops[idx].location);
-    title = buf;
+uint8_t menu_iterator_next(menu_iterator_t * pi) {
+  uint8_t ret = 0U;
+  if (pi->idx == UINT8_MAX) {
+    pi->idx = 0U;
+    pi->menu_idx.row = 0U;
   }
-  subtitle = stops[idx].name;
-  if (subtitle[0] == '\0') {
-    subtitle = NULL;
+  else {
+    ++pi->idx;
+    ++pi->menu_idx.row;
   }
-  menu_cell_basic_draw(ctx, cell_layer, title, subtitle, NULL);
-}
-
-void stops_select_click(struct MenuLayer *menu_layer, MenuIndex *cell_index, void *callback_context) {
-  if (num_stops > 0) {
-  	// Create services window and menu layer
-	  services_window = window_create();
-    
-    window_set_status_bar_icon(services_window, window_icon);
-    window_set_window_handlers(services_window, (WindowHandlers) {
-      .load = services_window_load,
-      .appear = services_window_appear,
-      .disappear = services_window_disappear,
-      .unload = services_window_unload
-    });
-    window_set_user_data(services_window, &stops[cell_index->row].stop_number);
-	  window_stack_push(services_window, true);
-  }
-}
-
-struct MenuLayerCallbacks stops_menu_callbacks;
-
-void stops_window_load(Window *window) {
-  // Initialise globals
-  num_stops = 0;
-  services_window = NULL;
-  strncpy(stops[0].location, "Locating", STOP_LOCATION_LEN);
-  stops[0].name[0] = '\0';
-  
-  // Create the menu
-  stops_menu = menu_layer_create(GRect(0, 0, 144, 154));
-  stops_menu_callbacks.draw_header = NULL;
-  stops_menu_callbacks.draw_row = stops_draw_row;
-  stops_menu_callbacks.get_cell_height = NULL;
-  stops_menu_callbacks.get_header_height = NULL;
-  stops_menu_callbacks.get_num_rows = stops_get_num_rows;
-  stops_menu_callbacks.get_num_sections = NULL;
-  stops_menu_callbacks.select_click = stops_select_click;
-  stops_menu_callbacks.select_long_click = NULL;
-  stops_menu_callbacks.selection_changed = NULL;
-  menu_layer_set_callbacks(stops_menu, NULL, stops_menu_callbacks);
-  menu_layer_set_click_config_onto_window(stops_menu, stops_window);
-	
-	// Add the menu to the window
-	layer_add_child(window_get_root_layer(stops_window), menu_layer_get_layer(stops_menu));
-}
-
-void stops_window_appear(Window *window) {
-  if (services_window != NULL) {
-    window_destroy(services_window);
-    services_window = NULL;
-  }
-}
-
-void stops_window_disappear(Window *window) {
-}
-
-void stops_window_unload(Window *window) {
-  menu_layer_destroy(stops_menu);
-  num_stops = 0;
-}
-
-void stops_add(DictionaryIterator *received) {
-  uint32_t n;
-  n = get_stop_number(dict_find(received, KEY_STOP_NUMBER));
-  if ((n == 0) && (num_stops == 0)) {
-    get_cstring(stops[0].location, STOP_LOCATION_LEN, dict_find(received, KEY_STOP_LOCATION), "Error");
-    stops[0].name[0] = '\0';
-    menu_layer_reload_data(stops_menu);
-  } else {
-    if (num_stops < MAX_STOPS) {
-      stops[num_stops].stop_number = n;
-      get_cstring(stops[num_stops].location, STOP_LOCATION_LEN, dict_find(received, KEY_STOP_LOCATION), "Error");
-      get_cstring(stops[num_stops].name, STOP_NAME_LEN, dict_find(received, KEY_STOP_NAME), "Error");
-      ++num_stops;
-      menu_layer_reload_data(stops_menu);
+  if (pi->idx < pi->menu->num_items) {
+    ret = 1U;
+    pi->item = &pi->menu->items[pi->idx];
+    if ((pi->idx > 0U) && (pi->item->identifier[0] == '!')) {
+      ++pi->menu_idx.section;
+      pi->menu_idx.row = 0U;
     }
   }
+  return ret;
+}
+
+void create_window(char * identifier) {
+  menu_t * menu;
+  DictionaryIterator * iter;
+  if (menu_idx < MAX_MENUS) {
+    menu = &menus[menu_idx];
+    ++menu_idx;
+    app_message_set_context(menu);
+    if (menu->window != NULL) {
+      window_destroy(menu->window);
+    }
+    menu->window = window_create();
+    window_set_user_data(menu->window, menu);
+    menu->num_items = 1U;
+    strcpy(menu->items[0].identifier, "$");
+    strcpy(menu->items[0].title, "Waiting for phone");
+    window_set_status_bar_icon(menu->window, window_icon);
+    window_set_window_handlers(menu->window, (WindowHandlers) {
+      .load = window_load,
+      .appear = window_appear,
+      .disappear = window_disappear,
+      .unload = window_unload
+    });
+  	window_stack_push(menu->window, true);
+    if (isalnum((int)identifier[0])) {
+      /* send request to JS */
+      app_message_outbox_begin(&iter);
+      if (iter != NULL) {
+        dict_write_cstring(iter, KEY_IDENTIFIER, identifier);
+        app_message_outbox_send();
+      }
+    }
+  }
+}
+
+void menu_draw_header(GContext * ctx, Layer const * cell_layer, uint16_t section_index, void * callback_context) {
+  char * title = "";
+  menu_iterator_t i;
+  menu_iterator_init(&i, (menu_t *)callback_context);
+  while (menu_iterator_next(&i)) {
+    if (i.menu_idx.section == section_index) {
+      title = i.item->title;
+      break;
+    }
+  }
+  menu_cell_basic_header_draw(ctx, cell_layer, title);
+}
+
+void menu_draw_row(GContext * ctx, Layer const * cell_layer, MenuIndex * cell_index, void * callback_context) {
+  char title[MAX_TITLE_LEN];
+  char subtitle[MAX_SUBTITLE_LEN];
+  menu_iterator_t i;
+  menu_iterator_init(&i, (menu_t *)callback_context);
+  strcpy(title, i.item->title);
+  subtitle[0] = '\0';
+  while (menu_iterator_next(&i)) {
+    if ((i.menu_idx.section == cell_index->section) && (i.menu_idx.row == (cell_index->row + 1U))) {
+      strcpy(title, i.item->title);
+      strcpy(subtitle, i.item->subtitle);
+      update_time_delta(title);
+      update_time_delta(subtitle);
+      break;
+    }
+  }
+  menu_cell_basic_draw(ctx, cell_layer, title, (subtitle[0] == '\0') ? NULL : subtitle, NULL);
+}
+
+int16_t menu_header_height(struct MenuLayer * menu_layer, uint16_t section_index, void * callback_context) {
+  int16_t ret = 0;
+  menu_iterator_t i;
+  menu_iterator_init(&i, (menu_t *)callback_context);
+  while (menu_iterator_next(&i)) {
+    if (i.menu_idx.section == section_index) {
+      if (i.item->identifier[0] == '!') {
+        ret = MENU_CELL_BASIC_HEADER_HEIGHT;
+      }
+    }
+  }
+  return ret;
+}
+
+uint16_t menu_num_rows(struct MenuLayer * menu_layer, uint16_t section_index, void * callback_context) {
+  uint16_t num = 0U;
+  menu_iterator_t i;
+  menu_iterator_init(&i, (menu_t *)callback_context);
+  while (menu_iterator_next(&i)) {
+    if (i.menu_idx.section == section_index) {
+      if (i.item->identifier[0] != '!') {
+        ++num;
+      }
+    }
+  }
+  return num;
+}
+
+uint16_t menu_num_sections(struct MenuLayer * menu_layer, void * callback_context) {
+  menu_iterator_t i;
+  menu_iterator_init(&i, (menu_t *)callback_context);
+  while (menu_iterator_next(&i)) {
+  }
+  return i.menu_idx.section + 1U;
+}
+
+void menu_select_click(struct MenuLayer * menu_layer, MenuIndex * cell_index, void * callback_context) {
+  menu_iterator_t i;
+  menu_iterator_init(&i, (menu_t *)callback_context);
+  while (menu_iterator_next(&i)) {
+    if ((i.menu_idx.section == cell_index->section) && (i.menu_idx.row == (cell_index->row + 1U))) {
+      if (isalnum((int)i.item->identifier[0])) {
+        create_window(i.item->identifier);
+      }
+      break;
+    }
+  }
+}
+
+void menu_callbacks_init(void) {
+  menu_callbacks.draw_header = menu_draw_header;
+  menu_callbacks.draw_row = menu_draw_row;
+  menu_callbacks.get_cell_height = NULL;
+  menu_callbacks.get_header_height = menu_header_height;
+  menu_callbacks.get_num_rows = menu_num_rows;
+  menu_callbacks.get_num_sections = menu_num_sections;
+  menu_callbacks.select_click = menu_select_click;
+  menu_callbacks.select_long_click = NULL;
+  menu_callbacks.selection_changed = NULL;
 }
 
 /* * * * * * * *
  * Application *
  * * * * * * * */
 
-void out_sent_handler(DictionaryIterator *sent, void *context) {
+void out_sent_handler(DictionaryIterator * sent, void * context) {
 }
 
-void out_failed_handler(DictionaryIterator *failed, AppMessageResult reason, void *context) {
-  if (get_stop_number(dict_find(failed, KEY_STOP_NUMBER)) == 0) {
-    // stops failed
-    num_stops = 0;
-    strncpy(stops[0].location, "No comms", STOP_LOCATION_LEN);
-    stops[0].name[0] = '\0';
-    menu_layer_reload_data(stops_menu);
-  } else {
-    // services failed
-    num_services = 0;
-    strncpy(services[0].info, "No comms", SERVICE_INFO_LEN);
-    services[0].dest[0] = '\0';
-    menu_layer_reload_data(services_menu);
+void out_failed_handler(DictionaryIterator * failed, AppMessageResult reason, void * context) {
+}
+
+uint8_t append_to_menu(menu_t * menu, char * identifier, char * title, char * subtitle) {
+  menu_item_t * i = &menu->items[menu->num_items];
+  strcpy(i->identifier, identifier);
+  strcpy(i->title, title);
+  strcpy(i->subtitle, subtitle);
+  ++menu->num_items;
+  return (identifier[0] == '!');
+}
+
+void in_received_handler(DictionaryIterator * received, void * context) {
+  menu_t * menu = (menu_t *)context;
+  //app_log(APP_LOG_LEVEL_INFO, "main.c", __LINE__, "in_received_handler");
+  if (menu->num_items < menu->max_items) {
+    /* If there is a message string, overwrite it */
+    if (menu->num_items > 0U) {
+      if (menu->items[menu->num_items - 1U].identifier[0] == '$') {
+        --menu->num_items;
+      }
+    }
+    /* Append received message to menu */
+    if (append_to_menu(menu,
+                       dict_find(received, KEY_IDENTIFIER)->value[0].cstring,
+                       dict_find(received, KEY_TITLE)->value[0].cstring,
+                       dict_find(received, KEY_SUBTITLE)->value[0].cstring)) {
+      /* Add "Please wait" under headings */
+      append_to_menu(menu, "$", "Please wait", "");
+    }
+    menu_layer_reload_data(menu->layer);
   }
 }
 
-void in_received_handler(DictionaryIterator *received, void *context) {
-  //app_log(APP_LOG_LEVEL_INFO, "main.c", __LINE__, "msgin");
-  Tuple *t;
-  t = dict_find(received, KEY_STOP_NUMBER);
-  if (services_window == NULL) {
-    // stops window
-    if (t != NULL) {
-      stops_add(received);
-    }
-  } else {
-    // services windows
-    if (t != NULL) {
-      // error message
-      if (num_services == 0) {
-        get_cstring(services[0].info, SERVICE_INFO_LEN,  dict_find(received, KEY_STOP_LOCATION), "No data");
-        services[0].dest[0] = '\0';
-      }
-    } else {
-      // service record?
-      if (dict_find(received, KEY_SERVICE_INFO) != NULL) {
-        services_add(received);
-      }
-    }
-    menu_layer_reload_data(services_menu);
-  }
-}
-
-void in_dropped_handler(AppMessageResult reason, void *context) {
+void in_dropped_handler(AppMessageResult reason, void * context) {
 }
 
 void handle_init(void) {
-  // Register message handlers
+  menus_init();
+  menu_callbacks_init();
+  
+  /* Register message handlers */
   const uint32_t inbound_size = 64;
   const uint32_t outbound_size = 64;
   app_message_register_inbox_received(in_received_handler);
@@ -413,28 +370,30 @@ void handle_init(void) {
   app_message_register_outbox_sent(out_sent_handler);
   app_message_register_outbox_failed(out_failed_handler);
   app_message_open(inbound_size, outbound_size);
-  
   window_icon = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_WINDOW_ICON);
   
-	// Create a window and menu layer
-	stops_window = window_create();
-  window_set_status_bar_icon(stops_window, window_icon);
-  window_set_window_handlers(stops_window, (WindowHandlers) {
-    .load = stops_window_load,
-    .appear = stops_window_appear,
-    .disappear = stops_window_disappear,
-    .unload = stops_window_unload
-  });
-	window_stack_push(stops_window, true);
+  create_window("");
+  
+  tick_timer_service_subscribe(MINUTE_UNIT, pebble_minute_tick);
 }
 
 void handle_deinit(void) {
-	window_destroy(stops_window);
+  uint8_t i;
+  Window * window;
+  tick_timer_service_unsubscribe();
+  for (i = 0U; i < MAX_MENUS; ++i) {
+    window = menus[i].window;
+    if (window != NULL) {
+      window_destroy(window);
+    }
+  }
   gbitmap_destroy(window_icon);
+  app_message_deregister_callbacks();
 }
 
 int main(void) {
 	handle_init();
 	app_event_loop();
 	handle_deinit();
+  /* 40B still allocated is a known issue related to tick_timer_service */
 }

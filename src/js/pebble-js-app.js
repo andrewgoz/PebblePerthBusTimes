@@ -1,3 +1,7 @@
+/* * * * * * *
+ * GEOCALCS  *
+ * * * * * * */
+
 var geocalcs = {};
 geocalcs.er = 6378.0; /* equatorial radius km */
 geocalcs.pr = 6357.0; /* polar radius km */
@@ -19,8 +23,12 @@ geocalcs.gcDistance = function (loc1, loc2) {
   var loc2r = geocalcs.deg2rad(loc2);
   var t = Math.cos(loc1r.lat) * Math.cos(loc2r.lat) * Math.cos(loc2r.lng - loc1r.lng) +
           Math.sin(loc1r.lat) * Math.sin(loc2r.lat);
-  if (t < -1) t = -1;
-  if (t > 1) t = 1;
+  if (t < -1) {
+    t = -1;
+  }
+  if (t > 1) {
+    t = 1;
+  }
   return Math.acos(t);
 };
 
@@ -54,8 +62,12 @@ geocalcs.bearing = function (loc1, loc2) {
     d = geocalcs.gcDistance(loc1, loc2);
     c = (Math.sin(loc2r.lat) - Math.sin(loc1r.lat) * Math.cos(d)) /
         (Math.sin(d) * Math.cos(loc1r.lat));
-    if (c < -1) c = -1;
-    if (c > 1) c = 1;
+    if (c < -1) {
+      c = -1;
+    }
+    if (c > 1) {
+      c = 1;
+    }
     c = Math.acos(c);
     if (Math.sin(loc2r.lng - loc1r.lng) < 0.0) {
       c = Math.PI * 2.0 - c;
@@ -67,161 +79,238 @@ geocalcs.bearing = function (loc1, loc2) {
 /* Text compass bearing of numeric bearing. */
 geocalcs.compassBearing = function (b) {
   var c = b + 11.25;
-  if (c >= 360.0) c -= 360.0;
+  if (c >= 360.0) {
+    c -= 360.0;
+  }
   c = geocalcs.bearingLabels[Math.floor(c / 22.5)];
-  if (!c) c = '-';
+  if (!c) {
+    c = "-";
+  }
   return c;
 };
 
+/* * * * * * * * * *
+ * Perth Bus Times *
+ * * * * * * * * * */
+
+/* http://doc.perthtransit.com/ */
+
 var app_msgs = [];
 
+function queue_app_msg(msg) {
+  app_msgs.push(msg);
+}
+
 function send_app_msgs(e) {
+  var msg;
   if (app_msgs.length > 0) {
-    Pebble.sendAppMessage(app_msgs.shift(), send_app_msgs);
+    msg = app_msgs.shift();
+    //console.log("send_app_msgs:{identifier:\"" + msg.identifier + "\", title:\"" + msg.title + "\", subtitle:\"" + msg.subtitle + "\"}");
+    Pebble.sendAppMessage({
+      identifier: msg.identifier,
+      title: msg.title.substr(0, 20),
+      subtitle: msg.subtitle.substr(0, 30)
+    }, send_app_msgs);
   }
 }
 
 function make_text_message(msg) {
   return {
-    stop_number: 0,
-    stop_location: msg,
-    stop_name: ""
+    identifier: msg[0],
+    title: msg.substr(1),
+    subtitle: ""
   };
 }
 
-function calc_stop_info(pos, stopinfo) {
-  stopinfo.dst = Math.floor(geocalcs.earthDistance(pos, stopinfo) * 1000.0); // metres
-  if (stopinfo.dst < 1000.0) {
-    stopinfo.dst = '' + stopinfo.dst + 'm';
-  } else {
-    stopinfo.dst = '' + Math.round(stopinfo.dst / 100.0) / 10.0 + 'km';
-  }
-  // compass direction, eg "E"
-  stopinfo.dst = stopinfo.dst + ' ' + geocalcs.compassBearing(geocalcs.bearing(pos, stopinfo));
-  // save
-  // stopinfo.identifier: "12345"
-  // stopinfo.name: "Abbey Rd Before Beatle Ln"
-  stopinfo.name = stopinfo.name.replace(" Before ", " b ");
-  stopinfo.name = stopinfo.name.replace(" After ", " a ");
-  return stopinfo;
-}
-
-function make_stop_message(stopinfo) {
-  return {
-    stop_number: Math.floor(stopinfo.stop_number),
-    stop_location: stopinfo.dst.substr(0, 10),
-    stop_name: stopinfo.name.substr(0, 30)
-  };
-}
-
-function send_bus_stops_near(pos, attempt) {
-  app_msgs = [];
-  var req = new XMLHttpRequest();
-  req.open('GET', 'http://api.perthtransit.com/1/bus_stops?near=' + pos.lat + ',' + pos.lng, true);
+function send_stops_near(pos, api, attempt) {
+  var req;
+  req = new XMLHttpRequest();
+  req.open("GET", "http://api.perthtransit.com/1/" + api + "?near=" + pos.lat + "," + pos.lng, true);
   req.timeout = 5000;
   req.onload = function(e) {
+    var dst, msg, rsp, stopinfo;
     if (req.readyState == 4) {
       if (((req.status == 200) || (req.status == 304)) && (req.responseText.length > 0)) {
         // request OK
-        var rsp = JSON.parse(req.responseText).response;
-        for (var idx in rsp) {
-          app_msgs.push(make_stop_message(calc_stop_info(pos, rsp[idx])));
+        if (api == "bus_stops" ) {
+          rsp = "!Bus stops";
+        } else {
+          rsp = "!Train stations";
         }
-        if (app_msgs.length === 0) {
-          app_msgs.push(make_text_message("No stops nearby"));
+        queue_app_msg(make_text_message(rsp));
+        rsp = JSON.parse(req.responseText);
+        msg = null;
+        for (var idx in rsp.response) {
+          stopinfo = rsp.response[idx];
+          // exclude train platform 'bus stops'
+          if (!(stopinfo.identifier >= 90000)) {
+            msg = {identifier: stopinfo.identifier, title: ""};
+            if (stopinfo.stop_number) {
+              msg.title = stopinfo.stop_number + " ";
+            }
+            dst = Math.floor(geocalcs.earthDistance(pos, stopinfo) * 1000.0); // metres
+            if (dst < 1000.0) {
+              msg.title += Math.round(dst / 10.0) * 10.0 + "m"; // nearest 10m
+            } else {
+              msg.title += Math.round(dst / 100.0) / 10.0 + "km"; // nearest 0.1km
+            }
+            // compass direction, eg "E"
+            msg.title += " " + geocalcs.compassBearing(geocalcs.bearing(pos, stopinfo));
+            msg.subtitle = stopinfo.name.replace(" Before ", " b ").replace(" After ", " a ");
+            queue_app_msg(msg);
+          }
+        }
+        if (!msg) {
+          queue_app_msg(make_text_message(" No stops nearby"));
+        }
+        if (api == "bus_stops" ) {
+          send_app_msgs();
+        } else {
+          send_stops_near(pos, "bus_stops", 3);
         }
       } else {
         // request error
-        if (attempt > 0)
-        {
-          send_bus_stops_near(pos, attempt - 1);
-        }
-        else
-        {
-          app_msgs.push(make_text_message("No comms"));
+        if (attempt > 0) {
+          send_stops_near(pos, api, attempt - 1);
+        } else {
+          queue_app_msg(make_text_message("$No comms"));
+          send_app_msgs();
         }
       }
-      send_app_msgs();
     }
   };
   req.send(null);
 }
 
 function position_ok(position) {
-  Pebble.sendAppMessage(make_text_message("Finding stops"));
-  send_bus_stops_near({
-    lat: position.coords.latitude,
-    lng: position.coords.longitude
-  }, 3);
-  //send_bus_stops_near({
-  //  lat: -32.051655,
-  //  lng: 115.746192
-  //}, 3);
+  var pos = {
+    lat: position.coords.latitude, lng: position.coords.longitude // <- FOR RELEASE
+    //lat: -31.902740, lng: 115.907434 // <- FOR DEMO (Collier Rd photo location)
+  };
+  //console.log("position_ok:" + pos.lat + "," + pos.lng);
+  Pebble.sendAppMessage(make_text_message("$Finding stops"));
+  app_msgs = [];
+  send_stops_near(pos, "train_stations", 3);
 }
 
 function position_fail(error) {
-  Pebble.sendAppMessage(make_text_message("No location"));
+  Pebble.sendAppMessage(make_text_message("$No location"));
 }
 
 Pebble.addEventListener("ready",
   function(e) {
-    console.log("ready");
+    //console.log("ready");
     setTimeout(function() {
-      Pebble.sendAppMessage(make_text_message("Locating"));
+      Pebble.sendAppMessage(make_text_message("$Locating"));
       navigator.geolocation.getCurrentPosition(position_ok, position_fail,
         {enableHighAccuracy: true, timeout: 60 * 1000, maximumAge: 1 * 60 * 1000});
     }, 10);
   }
 );
 
-function make_service_message(service) {
-  return {
-    service_info: service.time.substr(0, 5) + ' ' + service.route.substr(0, 3),
-    service_dest: service.destination.substr(0, 30)
-  };
-}
-
-function bus_services_ok(response) {
-  console.log("got bus routes");
-  // response.lat = -12.3456
-  // response.lng = 123.456
-  // response.stop_number = "12345"
-  // response.name = "Abbey Rd Before Beatle Ln"
-  // response.identifier = "12345"
+function queue_services(response) {
+  var msg, service;
+  // Common to Trains and Bus Stops:
+  //   response.lat = -31.9029238888889
+  //   response.lng = 115.909585
+  // For Trains (identifier starts with a-z):
+  //   response.identifier = "perth"
+  //   response.name = "Perth"
+  // For Bus Stops (identifier starts with 0-9):
+  //   response.identifier = "15832"
+  //   response.name = "Collier Rd After Priestley St"
+  //   response.stop_number = "15832"
+  if (response.stop_number) {
+    //console.log("got bus routes");
+    queue_app_msg(make_text_message("!" + response.stop_number));
+  } else {
+    //console.log("got trains");
+    queue_app_msg(make_text_message("!" + response.name));
+    /*
+    response.times.push({
+      "cars": 4,
+      "line": "Midland",
+      "on_time": true,
+      "pattern": null,
+      "platform": 7,
+      "status": "On Time",
+      "time": "19:00"
+    });
+    response.times.push({
+      "cars": 2,
+      "line": "Fremantle",
+      "on_time": true,
+      "pattern": "K",
+      "platform": 5,
+      "status": "On Time",
+      "time": "19:02"
+    });
+    response.times.push({
+      "cars": 4,
+      "line": "Armadale",
+      "on_time": true,
+      "pattern": "C",
+      "platform": 6,
+      "status": "On Time",
+      "time": "19:02"
+    });
+    */
+  }
+  msg = null;
   for (var idx in response.times) {
-    var service = response.times[idx];
-    // service.time = "12:34"
-    // service.route = "123"
-    // service.destination = "To Strawberry Fields"
-    app_msgs.push(make_service_message(service));
+    service = response.times[idx];
+    // For Trains:
+    //   service.time = "21:11"
+    //   service.cars = 2
+    //   service.line = "Fremantle"
+    //   service.on_time = true
+    //   service.pattern = null or "K"
+    //   service.platform = 7
+    //   service.status = "On Time"
+    // For Bus Stops:
+    //   service.time = "21:11"
+    //   service.route = "955"
+    //   service.destination = "To Ellenbrook"
+    if (service.pattern) {
+      service.line += "(" + service.pattern + ")";
+    }
+    msg = {identifier: " "};
+    if (response.stop_number) {
+      // Bus Stops
+      msg.title = service.time + " +#:## " + service.route;
+      msg.subtitle = service.destination;
+    } else {
+      // Trains
+      msg.title = service.time + " +#:## " + service.status;
+      msg.subtitle = "P" + service.platform + " " + service.line + " " + service.cars + "car";
+    }
+    queue_app_msg(msg);
   }
-  if (app_msgs.length === 0) {
-    app_msgs.push(make_text_message("No services"));
+  if (!msg) {
+    queue_app_msg(make_text_message(" No services"));
   }
 }
 
-function bus_services_fail() {
-  app_msgs.push(make_text_message("No comms"));
-}
-
-function send_services_at_stop(stop_number, attempt)
+function send_services_at(identifier, attempt)
 {
   app_msgs = [];
-  var req = new XMLHttpRequest();
-  req.open('GET', 'http://api.perthtransit.com/1/bus_stops/' + stop_number, true);
+  var api, req = new XMLHttpRequest();
+  if ((identifier >= 1) && (identifier <= 99999)) {
+    api = "bus_stops";
+  } else {
+    api = "train_stations";
+  }
+  req.open("GET", "http://api.perthtransit.com/1/" + api + "/" + identifier, true);
   req.timeout = 5000;
   req.onload = function(e) {
     if (req.readyState == 4) {
       if (((req.status == 200) || (req.status == 304)) && (req.responseText.length > 0)) {
-        bus_services_ok(JSON.parse(req.responseText).response);
+        queue_services(JSON.parse(req.responseText).response);
       } else {
-        if (attempt > 0)
-        {
-          send_services_at_stop(stop_number, attempt - 1);
-        }
-        else
-        {
-          bus_services_fail();
+        if (attempt > 0) {
+          send_services_at(identifier, attempt - 1);
+        } else {
+          queue_app_msg(make_text_message("$No comms"));
         }
       }
       send_app_msgs();
@@ -232,8 +321,8 @@ function send_services_at_stop(stop_number, attempt)
 
 Pebble.addEventListener("appmessage",
   function(e) {
-    console.log("stop_number:" + e.payload.stop_number);
-    Pebble.sendAppMessage(make_text_message("Finding services"));
-    send_services_at_stop(e.payload.stop_number, 3);
+    //console.log("identifier:" + e.payload.identifier);
+    Pebble.sendAppMessage(make_text_message("$Finding services"));
+    send_services_at(e.payload.identifier, 3);
   }
 );
