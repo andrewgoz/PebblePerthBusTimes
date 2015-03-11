@@ -14,7 +14,7 @@
 
 GBitmap *window_icon;
 
-#define MAX_IDENTIFIER_LEN (16U)
+#define MAX_IDENTIFIER_LEN (20U)
 #define MAX_TITLE_LEN      (32U)
 #define MAX_SUBTITLE_LEN   (32U)
 
@@ -30,6 +30,7 @@ typedef struct {
   uint8_t num_items;
   MenuLayer * layer;
   Window * window;
+  bool sel_changed;
 } menu_t;
 
 menu_item_t stops[MAX_STOPS], services[MAX_SERVICES];
@@ -40,6 +41,7 @@ void menus_init(void) {
   uint8_t i;
   for (i = 0U; i < MAX_MENUS; ++i) {
     menus[i].window = NULL;
+    menus[i].sel_changed = false;
   }
   menus[0].max_items = MAX_STOPS;
   menus[0].items = stops;
@@ -166,8 +168,8 @@ void menu_iterator_init(menu_iterator_t * pi, menu_t * menu) {
   pi->item = &menu->items[0];
 }
 
-uint8_t menu_iterator_next(menu_iterator_t * pi) {
-  uint8_t ret = 0U;
+bool menu_iterator_next(menu_iterator_t * pi) {
+  bool ret = false;
   if (pi->idx == UINT8_MAX) {
     pi->idx = 0U;
     pi->menu_idx.row = 0U;
@@ -177,7 +179,7 @@ uint8_t menu_iterator_next(menu_iterator_t * pi) {
     ++pi->menu_idx.row;
   }
   if (pi->idx < pi->menu->num_items) {
-    ret = 1U;
+    ret = true;
     pi->item = &pi->menu->items[pi->idx];
     if ((pi->idx > 0U) && (pi->item->identifier[0] == '!')) {
       ++pi->menu_idx.section;
@@ -198,6 +200,7 @@ void create_window(char * identifier) {
       window_destroy(menu->window);
     }
     menu->window = window_create();
+    menu->sel_changed = false;
     window_set_user_data(menu->window, menu);
     menu->num_items = 1U;
     strcpy(menu->items[0].identifier, "$");
@@ -238,7 +241,9 @@ void menu_draw_row(GContext * ctx, Layer const * cell_layer, MenuIndex * cell_in
   char title[MAX_TITLE_LEN];
   char subtitle[MAX_SUBTITLE_LEN];
   menu_iterator_t i;
-  menu_iterator_init(&i, (menu_t *)callback_context);
+  bool set_sel = false;
+  menu_t * menu = (menu_t *)callback_context;
+  menu_iterator_init(&i, menu);
   strcpy(title, i.item->title);
   subtitle[0] = '\0';
   while (menu_iterator_next(&i)) {
@@ -247,10 +252,17 @@ void menu_draw_row(GContext * ctx, Layer const * cell_layer, MenuIndex * cell_in
       strcpy(subtitle, i.item->subtitle);
       update_time_delta(title);
       update_time_delta(subtitle);
+      if (isalnum((int)i.item->identifier[0])) {
+        set_sel = true;
+      }
       break;
     }
   }
   menu_cell_basic_draw(ctx, cell_layer, title, (subtitle[0] == '\0') ? NULL : subtitle, NULL);
+  if (set_sel && !menu->sel_changed) {
+    menu->sel_changed = true;
+    menu_layer_set_selected_index(menu->layer, *cell_index, MenuRowAlignCenter, true);
+  }
 }
 
 int16_t menu_header_height(struct MenuLayer * menu_layer, uint16_t section_index, void * callback_context) {
@@ -302,6 +314,11 @@ void menu_select_click(struct MenuLayer * menu_layer, MenuIndex * cell_index, vo
   }
 }
 
+void menu_selection_changed(struct MenuLayer * menu_layer, MenuIndex new_index, MenuIndex old_index, void * callback_context) {
+  menu_t * menu = (menu_t *)callback_context;
+  menu->sel_changed = true;
+}
+
 void menu_callbacks_init(void) {
   menu_callbacks.draw_header = menu_draw_header;
   menu_callbacks.draw_row = menu_draw_row;
@@ -311,7 +328,7 @@ void menu_callbacks_init(void) {
   menu_callbacks.get_num_sections = menu_num_sections;
   menu_callbacks.select_click = menu_select_click;
   menu_callbacks.select_long_click = NULL;
-  menu_callbacks.selection_changed = NULL;
+  menu_callbacks.selection_changed = menu_selection_changed;
 }
 
 /* * * * * * * *
