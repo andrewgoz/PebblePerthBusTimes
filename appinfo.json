@@ -13,6 +13,16 @@
     "resources": {
         "media": [
             {
+                "file": "images/Icon144x144.png",
+                "name": "ICON_LARGE",
+                "type": "png"
+            },
+            {
+                "file": "images/Icon48x48.png",
+                "name": "ICON_SMALL",
+                "type": "png"
+            },
+            {
                 "file": "images/BusIcon28x28.png",
                 "menuIcon": true,
                 "name": "IMAGE_MENU_ICON",
@@ -28,8 +38,8 @@
     "sdkVersion": "2",
     "shortName": "Bus Times",
     "uuid": "327928b6-a4aa-47de-8141-6a84a56b47a3",
-    "versionCode": 3,
-    "versionLabel": "1.1",
+    "versionCode": 1,
+    "versionLabel": "1.2",
     "watchapp": {
         "watchface": false
     }

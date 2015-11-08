@@ -409,8 +409,10 @@ void handle_deinit(void) {
 }
 
 int main(void) {
-	handle_init();
-	app_event_loop();
-	handle_deinit();
+  //if (bluetooth_connection_service_peek()) {
+  	handle_init();
+	  app_event_loop();
+	  handle_deinit();
+  //}
   /* 40B still allocated is a known issue related to tick_timer_service */
 }

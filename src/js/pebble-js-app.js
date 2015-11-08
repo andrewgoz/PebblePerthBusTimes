@@ -148,6 +148,7 @@ function queue_stops(pos, api, req) {
       }
       // compass direction, eg "E"
       msg.title += " " + geocalcs.compassBearing(geocalcs.bearing(pos, stopinfo));
+      // abbreviate message
       msg.subtitle = stopinfo.name.replace(" Before ", " b ").replace(" After ", " a ");
       queue_app_msg(msg);
     }
@@ -252,7 +253,7 @@ function queue_services(response) {
     } else {
       // Trains
       msg.title = service.time + " +#:## P" + service.platform;
-      msg.subtitle = service.status + " to " + service.line + " " + service.cars + "car";
+      msg.subtitle = service.status.replace(" min", "m").replace(" delay", " dly").replace("On Time", "On time") + " " + service.line + " " + service.cars + "car";
     }
     queue_app_msg(msg);
   }
