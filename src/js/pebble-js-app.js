@@ -109,7 +109,8 @@ function send_app_msgs(e) {
     Pebble.sendAppMessage({
       identifier: msg.identifier,
       title: msg.title.substr(0, 20),
-      subtitle: msg.subtitle.substr(0, 30)
+      subtitle: msg.subtitle.substr(0, 30),
+      icon: msg.icon
     }, send_app_msgs);
   }
 }
@@ -118,12 +119,13 @@ function make_text_message(msg) {
   return {
     identifier: msg[0],
     title: msg.substr(1),
-    subtitle: ""
+    subtitle: "",
+    icon: ""
   };
 }
 
 function queue_stops(pos, api, req) {
-  var dst, msg, rsp, stopinfo;
+  var dst, msg, rsp, stopinfo, typ;
   if (api == "bus_stops" ) {
     rsp = "!Bus stops";
   } else {
@@ -134,9 +136,18 @@ function queue_stops(pos, api, req) {
   msg = null;
   for (var idx in rsp.response) {
     stopinfo = rsp.response[idx];
-    // exclude train platform 'bus stops'
-    if (!(stopinfo.identifier >= 90000)) {
-      msg = {identifier: stopinfo.identifier, title: ""};
+    // categorise stop
+    if ((stopinfo.identifier >= 1) && (stopinfo.identifier < 90000)) {
+      typ = "B"; // bus stop
+    } else if ((stopinfo.identifier >= 90000) && (stopinfo.identifier < 99998)) {
+      typ = "P"; // train station platform
+    } else if ((stopinfo.identifier >= 99998) && (stopinfo.identifier <= 99999)) {
+      typ = "F"; // ferry
+    } else {
+      typ = "T"; // train station
+    }
+    if (typ != "P") {
+      msg = {identifier: stopinfo.identifier, title: "", icon: typ};
       if (stopinfo.stop_number) {
         msg.title = stopinfo.stop_number + " ";
       }
@@ -245,7 +256,7 @@ function queue_services(response) {
     if (service.pattern) {
       service.line += "(" + service.pattern + ")";
     }
-    msg = {identifier: " "};
+    msg = {identifier: " ", icon: ""};
     if (response.stop_number) {
       // Bus Stops
       msg.title = service.time + " +#:## " + service.route;

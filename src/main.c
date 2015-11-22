@@ -4,6 +4,7 @@
 #define KEY_IDENTIFIER (1U)
 #define KEY_TITLE      (2U)
 #define KEY_SUBTITLE   (3U)
+#define KEY_ICON       (4U)
 
 #define MAX_MENUS    ( 2U)
 #define MAX_STOPS    (12U) /* 2 headings + 10 stops */
@@ -12,16 +13,20 @@
 #define HALF_DAY ( 720U) /* half a day in minutes */
 #define FULL_DAY (1440U) /* full day in minutes */
 
-GBitmap *window_icon;
+GBitmap * icon_bus16;
+GBitmap * icon_train16;
+GBitmap * icon_ferry16;
 
 #define MAX_IDENTIFIER_LEN (20U)
 #define MAX_TITLE_LEN      (32U)
 #define MAX_SUBTITLE_LEN   (32U)
+#define MAX_ICON_LEN       ( 2U)
 
 typedef struct {
   char identifier[MAX_IDENTIFIER_LEN];
   char title[MAX_TITLE_LEN];
   char subtitle[MAX_SUBTITLE_LEN];
+  char icon[MAX_ICON_LEN];
 } menu_item_t;
 
 typedef struct {
@@ -93,16 +98,20 @@ void update_time_delta(char * string) {
       }
       
       /* calculate difference */
-      if (mod >= pmod) {
-        string[i + 6U] = '+';
+      if (mod == pmod) {
+        m = '=';
+        diff = 0U;
+      } else if (mod > pmod) {
+        m = '+';
         diff = mod - pmod;
       } else {
-        string[i + 6U] = '-';
+        m = '-';
         diff = pmod - mod;
       }
       
       /* format for display */
       string[i + 5U] = ' ';
+      string[i + 6U] = m;
       string[i + 8U] = ':';      
       h = diff / 60U;
       m = diff % 60U;
@@ -205,7 +214,7 @@ void create_window(char * identifier) {
     menu->num_items = 1U;
     strcpy(menu->items[0].identifier, "$");
     strcpy(menu->items[0].title, "Waiting for phone");
-    window_set_status_bar_icon(menu->window, window_icon);
+    window_set_status_bar_icon(menu->window, icon_bus16);
     window_set_window_handlers(menu->window, (WindowHandlers) {
       .load = window_load,
       .appear = window_appear,
@@ -240,16 +249,24 @@ void menu_draw_header(GContext * ctx, Layer const * cell_layer, uint16_t section
 void menu_draw_row(GContext * ctx, Layer const * cell_layer, MenuIndex * cell_index, void * callback_context) {
   char title[MAX_TITLE_LEN];
   char subtitle[MAX_SUBTITLE_LEN];
+  char icon;
   menu_iterator_t i;
+  GRect r;
+  GRect layer_rect;
+  GSize title_size;
+  int16_t icon_size;
+  GBitmap * icon_bitmap;
   bool set_sel = false;
   menu_t * menu = (menu_t *)callback_context;
   menu_iterator_init(&i, menu);
   strcpy(title, i.item->title);
   subtitle[0] = '\0';
+  icon = '\0';
   while (menu_iterator_next(&i)) {
     if ((i.menu_idx.section == cell_index->section) && (i.menu_idx.row == (cell_index->row + 1U))) {
       strcpy(title, i.item->title);
       strcpy(subtitle, i.item->subtitle);
+      icon = i.item->icon[0];
       update_time_delta(title);
       update_time_delta(subtitle);
       if (isalnum((int)i.item->identifier[0])) {
@@ -258,7 +275,55 @@ void menu_draw_row(GContext * ctx, Layer const * cell_layer, MenuIndex * cell_in
       break;
     }
   }
-  menu_cell_basic_draw(ctx, cell_layer, title, (subtitle[0] == '\0') ? NULL : subtitle, NULL);
+  //layer_rect = layer_get_frame(cell_layer);
+  layer_rect = layer_get_bounds(cell_layer);
+  // draw icon
+  switch (icon) {
+  case 'B':
+    icon_size = 16;
+    icon_bitmap = icon_bus16;
+    break;
+  case 'T':
+    icon_size = 16;
+    icon_bitmap = icon_train16;
+    break;
+  case 'F':
+    icon_size = 16;
+    icon_bitmap = icon_ferry16;
+    break;
+  default:
+    icon_size = 0;
+    icon_bitmap = NULL;
+    break;
+  }
+  r.origin.x = layer_rect.origin.x;
+  r.origin.y = layer_rect.origin.y + 1;
+  r.size.w = icon_size;
+  r.size.h = icon_size;
+  if (icon_bitmap != NULL) {  
+    graphics_draw_bitmap_in_rect(ctx, icon_bitmap, r);
+  }
+  // draw first line of text
+  layer_rect.origin.y -= 8;
+  r.origin.x = layer_rect.origin.x + icon_size;
+  r.origin.y = layer_rect.origin.y;
+  r.size.w = layer_rect.size.w - icon_size;
+  r.size.h = layer_rect.size.h;
+  title_size = graphics_text_layout_get_content_size(title, fonts_get_system_font(FONT_KEY_GOTHIC_24), r, GTextOverflowModeFill, GTextAlignmentLeft);
+  r.size.h = title_size.h;
+  graphics_draw_text(ctx, title, fonts_get_system_font(FONT_KEY_GOTHIC_24), r, GTextOverflowModeFill, GTextAlignmentLeft, NULL);
+  if (subtitle[0] != '\0') {
+    // draw second line of text
+    if (title_size.h < icon_size) {
+      title_size.h = icon_size;
+    }
+    r.origin.x = layer_rect.origin.x;
+    r.origin.y = layer_rect.origin.y + title_size.h;
+    r.size.w = layer_rect.size.w;
+    r.size.h = layer_rect.size.h - title_size.h;
+    graphics_draw_text(ctx, subtitle, fonts_get_system_font(FONT_KEY_GOTHIC_18), r, GTextOverflowModeFill, GTextAlignmentLeft, NULL);
+  }
+  //menu_cell_basic_draw(ctx, cell_layer, title, (subtitle[0] == '\0') ? NULL : subtitle, icon_bus16);
   if (set_sel && !menu->sel_changed) {
     menu->sel_changed = true;
     menu_layer_set_selected_index(menu->layer, *cell_index, MenuRowAlignCenter, true);
@@ -341,11 +406,12 @@ void out_sent_handler(DictionaryIterator * sent, void * context) {
 void out_failed_handler(DictionaryIterator * failed, AppMessageResult reason, void * context) {
 }
 
-uint8_t append_to_menu(menu_t * menu, char * identifier, char * title, char * subtitle) {
+bool append_to_menu(menu_t * menu, char * identifier, char * title, char * subtitle, char * icon) {
   menu_item_t * i = &menu->items[menu->num_items];
   strcpy(i->identifier, identifier);
   strcpy(i->title, title);
   strcpy(i->subtitle, subtitle);
+  strcpy(i->icon, icon);
   ++menu->num_items;
   return (identifier[0] == '!');
 }
@@ -364,9 +430,10 @@ void in_received_handler(DictionaryIterator * received, void * context) {
     if (append_to_menu(menu,
                        dict_find(received, KEY_IDENTIFIER)->value[0].cstring,
                        dict_find(received, KEY_TITLE)->value[0].cstring,
-                       dict_find(received, KEY_SUBTITLE)->value[0].cstring)) {
+                       dict_find(received, KEY_SUBTITLE)->value[0].cstring,
+                       dict_find(received, KEY_ICON)->value[0].cstring)) {
       /* Add "Please wait" under headings */
-      append_to_menu(menu, "$", "Please wait", "");
+      append_to_menu(menu, "$", "Please wait", "", "");
     }
     menu_layer_reload_data(menu->layer);
   }
@@ -387,7 +454,9 @@ void handle_init(void) {
   app_message_register_outbox_sent(out_sent_handler);
   app_message_register_outbox_failed(out_failed_handler);
   app_message_open(inbound_size, outbound_size);
-  window_icon = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_WINDOW_ICON);
+  icon_bus16 = gbitmap_create_with_resource(RESOURCE_ID_ICON_BUS_16X16);
+  icon_train16 = gbitmap_create_with_resource(RESOURCE_ID_ICON_TRAIN_16X16);
+  icon_ferry16 = gbitmap_create_with_resource(RESOURCE_ID_ICON_FERRY_16X16);
   
   create_window("");
   
@@ -404,7 +473,9 @@ void handle_deinit(void) {
       window_destroy(window);
     }
   }
-  gbitmap_destroy(window_icon);
+  gbitmap_destroy(icon_ferry16);
+  gbitmap_destroy(icon_train16);
+  gbitmap_destroy(icon_bus16);
   app_message_deregister_callbacks();
 }
 

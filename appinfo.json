@@ -1,5 +1,6 @@
 {
     "appKeys": {
+        "icon": 4,
         "identifier": 1,
         "subtitle": 3,
         "title": 2
@@ -13,6 +14,16 @@
     "resources": {
         "media": [
             {
+                "file": "images/FerryIcon16x16.png",
+                "name": "ICON_FERRY_16X16",
+                "type": "png"
+            },
+            {
+                "file": "images/TrainIcon16x16.png",
+                "name": "ICON_TRAIN_16X16",
+                "type": "png"
+            },
+            {
                 "file": "images/Icon144x144.png",
                 "name": "ICON_LARGE",
                 "type": "png"
@@ -25,12 +36,12 @@
             {
                 "file": "images/BusIcon28x28.png",
                 "menuIcon": true,
-                "name": "IMAGE_MENU_ICON",
+                "name": "ICON_BUS_28X28",
                 "type": "png"
             },
             {
                 "file": "images/BusIcon16x16.png",
-                "name": "IMAGE_WINDOW_ICON",
+                "name": "ICON_BUS_16X16",
                 "type": "png"
             }
         ]
